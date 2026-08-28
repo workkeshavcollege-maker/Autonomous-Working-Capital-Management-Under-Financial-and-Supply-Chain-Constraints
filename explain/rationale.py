@@ -1,0 +1,52 @@
+import os
+from dotenv import load_dotenv
+from google import genai
+from google.genai import types
+
+def explain_decision(invoice: dict, action: str, scores: dict) -> str:
+    """
+    Explains the financial trade-offs of a decision using Gemini.
+    """
+    load_dotenv()
+    
+    # Force Python to ignore the old global Windows key
+    if "GOOGLE_API_KEY" in os.environ:
+        del os.environ["GOOGLE_API_KEY"]
+        
+    api_key = os.getenv("GEMINI_API_KEY")
+    
+    if not api_key:
+        raise ValueError("GEMINI_API_KEY is not set in the .env file.")
+        
+    client = genai.Client(api_key=api_key)
+    
+    prompt = f"""
+    You are an expert financial analyst. 
+    Explain the financial trade-offs of the following invoice decision in exactly 2-3 plain-English sentences.
+    
+    Invoice Details:
+    - ID: {invoice.get('invoice_id', 'Unknown')}
+    - Supplier: {invoice.get('supplier', 'Unknown')}
+    - Amount: ${invoice.get('amount', 0)}
+    - Due Date: {invoice.get('due_date', 'Unknown')}
+    - Discount: {invoice.get('discount_pct', 0) * 100}%
+    
+    Action Taken: {action}
+    
+    Sub-scores:
+    - Liquidity: {scores.get('liquidity')}
+    - Financing Cost: {scores.get('financing_cost')}
+    - Discount Value: {scores.get('discount_value')}
+    - Supplier Priority: {scores.get('supplier_priority')}
+    - Risk: {scores.get('risk')}
+    """
+    
+    response = client.models.generate_content(
+        model='gemini-2.5-flash',
+        contents=prompt,
+        config=types.GenerateContentConfig(
+            temperature=0.3
+        )
+    )
+    
+    return response.text

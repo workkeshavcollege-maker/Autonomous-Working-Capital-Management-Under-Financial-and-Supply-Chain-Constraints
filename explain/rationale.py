@@ -25,19 +25,19 @@ def explain_decision(invoice: dict, action: str, scores: dict) -> str:
     Explain the financial trade-offs of the following invoice decision in exactly 2-3 plain-English sentences.
     
     Invoice Details:
-    - ID: {invoice.get('id')}
-    - Supplier: {invoice.get('supplier')}
-    - Amount: ${invoice.get('amount')}
-    - Due Date: {invoice.get('due_date')}
+    - ID: {invoice.get('invoice_id', 'Unknown')}
+    - Supplier: {invoice.get('supplier', 'Unknown')}
+    - Amount: ${invoice.get('amount', 0)}
+    - Due Date: {invoice.get('due_date', 'Unknown')}
     - Discount: {invoice.get('discount_pct', 0) * 100}%
     
     Action Taken: {action}
     
     Sub-scores:
     - Liquidity: {scores.get('liquidity')}
-    - Cost: {scores.get('cost')}
-    - Discount: {scores.get('discount')}
-    - Supplier: {scores.get('supplier')}
+    - Financing Cost: {scores.get('financing_cost')}
+    - Discount Value: {scores.get('discount_value')}
+    - Supplier Priority: {scores.get('supplier_priority')}
     - Risk: {scores.get('risk')}
     """
     

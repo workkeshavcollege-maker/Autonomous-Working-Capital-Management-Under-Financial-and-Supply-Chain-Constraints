@@ -1,53 +1,41 @@
-"""Scoring module for evaluating working capital actions."""
+import joblib
+import os
 
-from engine import actions
+# Load the trained ML components and encoders once when the engine starts
+current_dir = os.path.dirname(__file__)
+model = joblib.load(os.path.join(current_dir, 'xgb_scorer.pkl'))
+le_pri = joblib.load(os.path.join(current_dir, 'le_pri.pkl'))
+le_act = joblib.load(os.path.join(current_dir, 'le_act.pkl'))
 
 def score_action(invoice, action, forecast, weights=None):
     """
-    Calculates sub-scores between 0.0 and 1.0 for a given action and invoice,
-    returning a weighted total score and the breakdown.
+    Evaluates a working capital financial action using the trained XGBoost model.
+    - invoice: dictionary containing invoice metadata (amount, discount_pct, supplier_priority, etc.)
+    - action: string representing the chosen action (e.g., 'take_discount', 'pay_at_maturity', 'delay_payment')
+    - forecast: dictionary from Teammate D's model containing 'predicted_delay_days'
     """
-    if weights is None:
-        weights = {
-            'liquidity': 0.30,
-            'financing_cost': 0.25,
-            'discount_value': 0.20,
-            'supplier_priority': 0.15,
-            'risk': 0.10
-        }
+    # 1. Extract features from the request and Teammate D's forecast
+    amount = invoice.get('amount', invoice.get('InvoiceAmount', 0))
+    expected_delay = forecast.get('predicted_delay_days', forecast.get('expected_delay', 0))
+    discount = invoice.get('discount_pct', 0.0)
+    priority_str = invoice.get('supplier_priority', 'high')
 
-    # Baseline scores (0.5 represents neutral impact)
-    sub_scores = {
-        'liquidity': 0.5,
-        'financing_cost': 0.5,
-        'discount_value': 0.5,
-        'supplier_priority': 0.5,
-        'risk': 0.5
-    }
+    # 2. Safely encode categorical strings (fallback to index 0 if unknown)
+    priority_encoded = le_pri.transform([priority_str])[0] if priority_str in le_pri.classes_ else 0
+    action_encoded = le_act.transform([action])[0] if action in le_act.classes_ else 0
 
-    # Simulate algorithmic adjustments based on action type
-    discount_pct = invoice.get("discount_pct", 0.0)
-    
-    if action == actions.TAKE_DISCOUNT:
-        sub_scores['discount_value'] = 0.95 if discount_pct > 0 else 0.10
-        sub_scores['liquidity'] = 0.40
-    elif action == actions.PAY_AT_MATURITY:
-        sub_scores['liquidity'] = 0.85
-        sub_scores['financing_cost'] = 1.00
-    elif action == actions.SUPPLIER_FINANCING:
-        sub_scores['liquidity'] = 0.90
-        sub_scores['financing_cost'] = 0.60
-    
-    # Adjust priority score based on invoice data
-    priority = invoice.get("supplier_priority", "low")
-    if priority == "critical":
-        sub_scores['supplier_priority'] = 0.90
-    elif priority == "high":
-        sub_scores['supplier_priority'] = 0.75
+    # 3. Run prediction through your XGBoost model
+    features = [[amount, expected_delay, discount, priority_encoded, action_encoded]]
+    predicted_score = float(model.predict(features)[0])
 
-    total_score = sum(sub_scores[metric] * weights[metric] for metric in weights)
-
+    # 4. Return structured dictionary formatted for Gemini rationale & dashboard display
     return {
-        'total_score': total_score,
-        'sub_scores': sub_scores
+        'total_score': predicted_score,
+        'sub_scores': {
+            'liquidity_impact': predicted_score * 0.3, 
+            'financing_cost': predicted_score * 0.2,
+            'discount_value': discount * 10,
+            'supplier_priority_risk': priority_encoded * 0.3,
+            'forecast_penalty': max(0.0, 1.0 - (expected_delay / 30.0)) * 0.1
+        }
     }

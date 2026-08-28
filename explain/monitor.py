@@ -1,4 +1,7 @@
 def detect_change(previous_state: dict, current_state: dict) -> list:
+    """
+    Compares previous_state and current_state and returns a list of material changes.
+    """
     changes = []
     
     for key, curr_val in current_state.items():
@@ -16,6 +19,10 @@ def detect_change(previous_state: dict, current_state: dict) -> list:
     return changes
 
 def reoptimize(current_state: dict, forecast_func, decide_func):
+    """
+    Continuous decision loop: re-runs forecast_func, loops through all 
+    invoices to re-run decide_func, and returns the newly updated forecast and decisions.
+    """
     updated_forecast = forecast_func(
         current_state.get('cash_balance', 0),
         current_state.get('invoices', []),
@@ -28,7 +35,7 @@ def reoptimize(current_state: dict, forecast_func, decide_func):
     for invoice in invoices:
         decision = decide_func(invoice, updated_forecast)
         updated_decisions.append({
-            "invoice_id": invoice.get("id"),
+            "invoice_id": invoice.get("invoice_id", "Unknown"),
             "decision": decision
         })
         

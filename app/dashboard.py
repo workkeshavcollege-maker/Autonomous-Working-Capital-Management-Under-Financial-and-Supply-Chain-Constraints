@@ -159,22 +159,34 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
+import importlib
+
 # Required Integrations & Imports
 try:
+    import data.forecast
+    import engine.decide
+    import explain.rationale
+    import explain.monitor
+    
+    # Refresh modules to guarantee hot-reload pick-up
+    importlib.reload(data.forecast)
+    importlib.reload(engine.decide)
+    importlib.reload(explain.rationale)
+    importlib.reload(explain.monitor)
+    
     from data.forecast import project_cashflow
-    from engine.decide import choose_best_action
+    from engine.decide import choose_best_action, optimize_portfolio
     from explain.rationale import explain_decision, explain_all_decisions
     from explain.monitor import detect_change, reoptimize
     BACKEND_AVAILABLE = True
-except ImportError as e:
+except Exception as e:
     BACKEND_AVAILABLE = False
-    st.error(f"DEBUG - ImportError: {e}")
+    st.error(f"DEBUG - Backend Error: {e}")
     
     # ---------------------------------------------------------
-    # Mock Data Generation (Fallback for missing backend)
+    # Fallbacks for missing backend
     # ---------------------------------------------------------
     def project_cashflow(*args, **kwargs) -> List[Dict[str, Any]]:
-        """Returns a day-by-day cash-flow projection list"""
         start_date = st.session_state.current_simulated_date
         current_cash = st.session_state.current_cash_balance
         days = 30
@@ -183,31 +195,26 @@ except ImportError as e:
         for i in range(days):
             date_str = (start_date + datetime.timedelta(days=i)).strftime("%Y-%m-%d")
             projection.append({"date": date_str, "cash_projection": cash})
-            cash += random.uniform(-5000, 10000)
+            cash += random.uniform(-2000, 4000)
         return projection
 
+    def optimize_portfolio(invoices: List[Dict[str, Any]], current_cash: float) -> List[Dict[str, Any]]:
+        return [
+            {
+                "invoice_id": inv.get("id", "UNKNOWN"),
+                "action": "take_discount" if float(inv.get("discount_pct", 0)) >= 1.5 and current_cash > float(inv.get("amount", 0)) else "pay_at_maturity",
+                "scores": {"liquidity": 0.75, "cost": 0.80, "discount": 0.02, "supplier": 0.85, "risk": 0.15},
+                "target_score": 0.85,
+                "rationale": "Fallback decision."
+            }
+            for inv in invoices
+        ]
+
     def choose_best_action(invoice: Dict[str, Any], *args, **kwargs) -> Dict[str, Any]:
-        """Returns a Decision dict matching the required schema"""
-        actions = ["take_discount", "delay_payment", "pay_on_time"]
-        chosen = random.choice(actions)
-        return {
-            "invoice_id": invoice["id"],
-            "action": chosen,
-            "scores": {
-                "liquidity": round(random.uniform(0.1, 0.9), 2),
-                "cost": round(random.uniform(0.1, 0.9), 2),
-                "discount": round(random.uniform(0.1, 0.9), 2),
-                "supplier": round(random.uniform(0.1, 0.9), 2),
-                "risk": round(random.uniform(0.1, 0.9), 2)
-            },
-            "rationale": f"Model selected {chosen} based on calculated financial and risk trade-offs."
-        }
+        return optimize_portfolio([invoice], 250000.0)[0]
 
     def explain_decision(invoice: Dict[str, Any], action: str, scores: Dict[str, Any]) -> str:
-        """Returns a plain-English explanation"""
-        return (f"The recommended action for Invoice {invoice['id']} is to '{action}'. "
-                f"This decision is supported by a liquidity score of {scores.get('liquidity')} "
-                f"and a supplier impact score of {scores.get('supplier')}.")
+        return f"Recommendation for {invoice.get('id')}: {action}."
 
     def explain_all_decisions(invoices: list, decisions: list) -> dict:
         return {inv["id"]: explain_decision(inv, dec["action"], dec["scores"]) for inv, dec in zip(invoices, decisions)}
@@ -222,15 +229,55 @@ def generate_mock_invoices(base_date: datetime.date) -> List[Dict[str, Any]]:
     """Helper to generate initial invoice data matching the required schema"""
     return [
         {
-            "id": f"INV-{random.randint(1000, 9999)}",
-            "supplier": random.choice(["Acme Corp", "Globex", "Initech", "Umbrella Corp", "Stark Industries"]),
-            "amount": round(random.uniform(5000, 50000), 2),
-            "due_date": (base_date + datetime.timedelta(days=random.randint(10, 45))).strftime("%Y-%m-%d"),
-            "discount_pct": round(random.uniform(1.0, 3.0), 2),
-            "discount_deadline": (base_date + datetime.timedelta(days=random.randint(2, 10))).strftime("%Y-%m-%d"),
-            "penalty_pct": round(random.uniform(1.0, 5.0), 2)
+            "id": "INV-4821",
+            "supplier": "Stark Industries",
+            "amount": 78000.0,
+            "due_date": (base_date + datetime.timedelta(days=12)).strftime("%Y-%m-%d"),
+            "discount_pct": 3.0,
+            "discount_deadline": (base_date + datetime.timedelta(days=4)).strftime("%Y-%m-%d"),
+            "penalty_pct": 2.5,
+            "priority": "critical"
+        },
+        {
+            "id": "INV-5104",
+            "supplier": "Umbrella Corp",
+            "amount": 42000.0,
+            "due_date": (base_date + datetime.timedelta(days=18)).strftime("%Y-%m-%d"),
+            "discount_pct": 2.0,
+            "discount_deadline": (base_date + datetime.timedelta(days=6)).strftime("%Y-%m-%d"),
+            "penalty_pct": 3.0,
+            "priority": "critical"
+        },
+        {
+            "id": "INV-3920",
+            "supplier": "Acme Industrial",
+            "amount": 29500.0,
+            "due_date": (base_date + datetime.timedelta(days=8)).strftime("%Y-%m-%d"),
+            "discount_pct": 2.5,
+            "discount_deadline": (base_date + datetime.timedelta(days=3)).strftime("%Y-%m-%d"),
+            "penalty_pct": 2.0,
+            "priority": "high"
+        },
+        {
+            "id": "INV-6019",
+            "supplier": "Globex Logistics",
+            "amount": 54000.0,
+            "due_date": (base_date + datetime.timedelta(days=22)).strftime("%Y-%m-%d"),
+            "discount_pct": 1.0,
+            "discount_deadline": (base_date + datetime.timedelta(days=7)).strftime("%Y-%m-%d"),
+            "penalty_pct": 3.5,
+            "priority": "standard"
+        },
+        {
+            "id": "INV-2847",
+            "supplier": "Initech Services",
+            "amount": 16500.0,
+            "due_date": (base_date + datetime.timedelta(days=15)).strftime("%Y-%m-%d"),
+            "discount_pct": 0.0,
+            "discount_deadline": (base_date + datetime.timedelta(days=5)).strftime("%Y-%m-%d"),
+            "penalty_pct": 1.5,
+            "priority": "low"
         }
-        for _ in range(5)
     ]
 
 def parse_uploaded_invoices(df: pd.DataFrame, base_date: datetime.date) -> List[Dict[str, Any]]:
@@ -238,16 +285,18 @@ def parse_uploaded_invoices(df: pd.DataFrame, base_date: datetime.date) -> List[
     col_map = {}
     for col in df.columns:
         c_clean = str(col).strip().lower().replace('_', ' ').replace('-', ' ')
-        if any(k in c_clean for k in ['id', 'invoice']):
+        if any(k in c_clean for k in ['priority', 'tier', 'critical', 'importance', 'strategic']):
+            col_map[col] = 'priority'
+        elif any(k in c_clean for k in ['discount', 'disc', 'pct', 'rate', 'terms']):
+            col_map[col] = 'discount_pct'
+        elif any(k in c_clean for k in ['due', 'date', 'maturity', 'deadline']):
+            col_map[col] = 'due_date'
+        elif any(k in c_clean for k in ['amount', 'total', 'value', 'balance', 'price']):
+            col_map[col] = 'amount'
+        elif any(k in c_clean for k in ['id', 'invoice']):
             col_map[col] = 'id'
         elif any(k in c_clean for k in ['vendor', 'supplier', 'partner', 'company', 'name']):
             col_map[col] = 'supplier'
-        elif any(k in c_clean for k in ['amount', 'total', 'value', 'balance', 'price']):
-            col_map[col] = 'amount'
-        elif any(k in c_clean for k in ['due', 'date', 'maturity', 'deadline']):
-            col_map[col] = 'due_date'
-        elif any(k in c_clean for k in ['discount', 'disc', 'pct', 'rate']):
-            col_map[col] = 'discount_pct'
             
     df_renamed = df.rename(columns=col_map)
     invoices = []
@@ -266,6 +315,8 @@ def parse_uploaded_invoices(df: pd.DataFrame, base_date: datetime.date) -> List[
         if pd.isna(due_val) or due_val.lower() == 'nan':
             due_val = (base_date + datetime.timedelta(days=20)).strftime("%Y-%m-%d")
 
+        pri_val = str(row.get('priority', 'standard'))
+
         inv = {
             'id': str(row.get('id', f'INV-{idx+1001}')),
             'supplier': str(row.get('supplier', f'Supplier {idx+1}')),
@@ -273,7 +324,8 @@ def parse_uploaded_invoices(df: pd.DataFrame, base_date: datetime.date) -> List[
             'due_date': due_val[:10],
             'discount_pct': round(disc_val, 2),
             'discount_deadline': (base_date + datetime.timedelta(days=5)).strftime("%Y-%m-%d"),
-            'penalty_pct': 2.0
+            'penalty_pct': 2.0,
+            'priority': pri_val
         }
         invoices.append(inv)
     return invoices
@@ -348,16 +400,16 @@ st.markdown("<div style='margin-bottom: 2rem;'></div>", unsafe_allow_html=True)
 # ---------------------------------------------------------
 left_col, right_col = st.columns([1, 1.25], gap="large")
 
-# Compute decisions for active invoices
-decisions = []
-for inv in st.session_state.active_invoices:
-    dec = choose_best_action(inv, st.session_state.current_simulated_date, st.session_state.current_cash_balance)
-    decisions.append(dec)
+# Compute decisions via Portfolio-Level Optimization
+decisions = optimize_portfolio(st.session_state.active_invoices, st.session_state.current_cash_balance)
 
-# Count decision breakdown for summary badges
-discount_count = sum(1 for d in decisions if "discount" in d["action"].lower())
+# Count decision breakdown across all actions
+discount_count = sum(1 for d in decisions if "discount" in d["action"].lower() or d["action"].lower() == "pay_now")
+bank_count = sum(1 for d in decisions if "bank" in d["action"].lower())
+supplier_fin_count = sum(1 for d in decisions if "supplier_financing" in d["action"].lower())
 delay_count = sum(1 for d in decisions if "delay" in d["action"].lower())
-maturity_count = len(decisions) - discount_count - delay_count
+hold_count = sum(1 for d in decisions if "hold" in d["action"].lower())
+maturity_count = sum(1 for d in decisions if "maturity" in d["action"].lower() or "time" in d["action"].lower())
 
 with left_col:
     # 1. Cashflow Projection Card
@@ -408,7 +460,7 @@ with left_col:
             step=10000.0,
             format="%.2f",
             label_visibility="collapsed",
-            help="Directly adjust starting liquidity to evaluate decision changes."
+            help="Directly adjust starting liquidity to evaluate decision changes in real time."
         )
         if new_cash != st.session_state.current_cash_balance:
             st.session_state.current_cash_balance = new_cash
@@ -422,7 +474,7 @@ with left_col:
             "Upload Ledger File",
             type=["csv", "xlsx"],
             label_visibility="collapsed",
-            help="Upload your own custom invoice file with columns: Invoice ID, Supplier, Amount, Due Date, Discount Rate (%)."
+            help="Upload your custom invoice file with columns: Invoice ID, Supplier, Amount, Due Date, Discount Rate (%), Priority."
         )
         
         if uploaded_file is not None:
@@ -446,7 +498,7 @@ with left_col:
         # Template download & Reset buttons
         col_btn1, col_btn2 = st.columns(2)
         with col_btn1:
-            sample_csv = "Invoice ID,Supplier,Amount,Due Date,Discount Rate (%)\nINV-8801,Apex Tech,42000.00,2026-09-18,2.5\nINV-8802,Vertex Logistics,27500.00,2026-09-25,1.5\nINV-8803,Stark Industries,89000.00,2026-09-20,3.0\nINV-8804,Nordic Components,15400.00,2026-09-12,2.0\nINV-8805,Helios Energy,63000.00,2026-09-28,1.0"
+            sample_csv = "Invoice ID,Supplier,Amount,Due Date,Discount Rate (%),Priority\nINV-8801,Apex Tech,42000.00,2026-09-18,2.5,High\nINV-8802,Vertex Logistics,27500.00,2026-09-25,1.5,Standard\nINV-8803,Stark Industries,89000.00,2026-09-20,3.0,Critical\nINV-8804,Nordic Components,15400.00,2026-09-12,0.0,Standard\nINV-8805,Helios Energy,63000.00,2026-09-28,1.0,High\nINV-8806,Office Supplies Direct,12000.00,2026-09-30,0.0,Low"
             st.download_button(
                 label="📥 Sample CSV",
                 data=sample_csv,
@@ -464,7 +516,6 @@ with left_col:
         
         # Advance Simulation Cycle button
         if st.button("Advance Simulation Cycle", type="primary", use_container_width=True):
-            # Capture previous state
             previous_state = {
                 "date": st.session_state.current_simulated_date,
                 "cash_balance": st.session_state.current_cash_balance,
@@ -483,7 +534,6 @@ with left_col:
                 new_invs = generate_mock_invoices(st.session_state.current_simulated_date)
                 st.session_state.active_invoices.append(new_invs[0])
                 
-            # Capture current state
             current_state = {
                 "date": st.session_state.current_simulated_date,
                 "cash_balance": st.session_state.current_cash_balance,
@@ -498,13 +548,27 @@ with left_col:
 
 with right_col:
     # 3. Payables Decision Ledger
+    badges_html = []
+    if discount_count > 0:
+        badges_html.append(f'<span style="background: #EDF3F0; color: #264739; font-size: 0.72rem; font-weight: 700; padding: 2px 7px; border-radius: 4px; border: 1px solid #C8DCD3;">{discount_count} Discounts</span>')
+    if bank_count > 0:
+        badges_html.append(f'<span style="background: #EBF3FA; color: #1E4E79; font-size: 0.72rem; font-weight: 700; padding: 2px 7px; border-radius: 4px; border: 1px solid #BDD7EE;">{bank_count} Bank Financed</span>')
+    if supplier_fin_count > 0:
+        badges_html.append(f'<span style="background: #F3EEF9; color: #5B2C8B; font-size: 0.72rem; font-weight: 700; padding: 2px 7px; border-radius: 4px; border: 1px solid #DAC7EE;">{supplier_fin_count} Supplier Financed</span>')
+    if delay_count > 0:
+        badges_html.append(f'<span style="background: #FEF3C7; color: #92400E; font-size: 0.72rem; font-weight: 700; padding: 2px 7px; border-radius: 4px; border: 1px solid #FDE68A;">{delay_count} Delayed</span>')
+    if hold_count > 0:
+        badges_html.append(f'<span style="background: #FEE2E2; color: #991B1B; font-size: 0.72rem; font-weight: 700; padding: 2px 7px; border-radius: 4px; border: 1px solid #FECACA;">{hold_count} Hold Cash</span>')
+    if maturity_count > 0:
+        badges_html.append(f'<span style="background: #FDF2EE; color: #9C3E20; font-size: 0.72rem; font-weight: 700; padding: 2px 7px; border-radius: 4px; border: 1px solid #F8D7CC;">{maturity_count} Standard</span>')
+
+    badges_rendered = "".join(badges_html)
+
     st.markdown(f"""
     <div style="display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 8px;">
         <span class="section-header">Payables Ledger</span>
-        <div style="display: flex; gap: 6px;">
-            <span style="background: #EDF3F0; color: #264739; font-size: 0.72rem; font-weight: 700; padding: 2px 7px; border-radius: 4px; border: 1px solid #C8DCD3;">{discount_count} Discounts</span>
-            <span style="background: #FEF3C7; color: #92400E; font-size: 0.72rem; font-weight: 700; padding: 2px 7px; border-radius: 4px; border: 1px solid #FDE68A;">{delay_count} Delayed</span>
-            <span style="background: #FDF2EE; color: #9C3E20; font-size: 0.72rem; font-weight: 700; padding: 2px 7px; border-radius: 4px; border: 1px solid #F8D7CC;">{maturity_count} Standard</span>
+        <div style="display: flex; gap: 6px; flex-wrap: wrap;">
+            {badges_rendered}
         </div>
     </div>
     """, unsafe_allow_html=True)
@@ -521,13 +585,19 @@ with right_col:
 
     df_table = pd.DataFrame(table_data)
 
-    # Earth-tone Styler mapping
+    # Earth-tone Action Styler mapping across all 7 actions
     def highlight_actions(val):
         val_str = str(val).lower()
-        if "discount" in val_str:
+        if "discount" in val_str or "now" in val_str:
             return "background-color: #EDF3F0; color: #264739; font-weight: 700;"
+        elif "bank" in val_str:
+            return "background-color: #EBF3FA; color: #1E4E79; font-weight: 700;"
+        elif "supplier" in val_str:
+            return "background-color: #F3EEF9; color: #5B2C8B; font-weight: 700;"
         elif "delay" in val_str:
             return "background-color: #FEF3C7; color: #92400E; font-weight: 700;"
+        elif "hold" in val_str:
+            return "background-color: #FEE2E2; color: #991B1B; font-weight: 700;"
         else:
             return "background-color: #FDF2EE; color: #9C3E20; font-weight: 700;"
 

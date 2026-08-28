@@ -370,7 +370,9 @@ with left_col:
     
     projection_list = project_cashflow(
         st.session_state.current_simulated_date, 
-        st.session_state.current_cash_balance
+        st.session_state.current_cash_balance,
+        st.session_state.active_invoices,
+        decisions
     )
 
     with st.container(border=True):

@@ -1,47 +1,35 @@
-import os
-from dotenv import load_dotenv
-from google import genai
-from google.genai import types
+def detect_change(previous_state: dict, current_state: dict) -> list:
+    changes = []
+    
+    for key, curr_val in current_state.items():
+        if key in previous_state:
+            prev_val = previous_state[key]
+            if prev_val != curr_val:
+                changes.append(f"Material change in '{key}': {prev_val} -> {curr_val}")
+        else:
+            changes.append(f"New metric added '{key}': {curr_val}")
+            
+    for key, prev_val in previous_state.items():
+        if key not in current_state:
+            changes.append(f"Metric removed '{key}': {prev_val}")
+            
+    return changes
 
-def explain_decision(invoice: dict, action: str, scores: dict) -> str:
-    """
-    Explains the financial trade-offs of a decision using Gemini Pro 3.1.
-    """
-    load_dotenv()
-    api_key = os.getenv("GEMINI_API_KEY")
-    
-    if not api_key:
-        raise ValueError("GEMINI_API_KEY is not set in the .env file.")
-        
-    client = genai.Client(api_key=api_key)
-    
-    prompt = f"""
-    You are an expert financial analyst. 
-    Explain the financial trade-offs of the following invoice decision in exactly 2-3 plain-English sentences.
-    
-    Invoice Details:
-    - ID: {invoice.get('id')}
-    - Supplier: {invoice.get('supplier')}
-    - Amount: ${invoice.get('amount')}
-    - Due Date: {invoice.get('due_date')}
-    - Discount: {invoice.get('discount_pct', 0) * 100}%
-    
-    Action Taken: {action}
-    
-    Sub-scores:
-    - Liquidity: {scores.get('liquidity')}
-    - Cost: {scores.get('cost')}
-    - Discount: {scores.get('discount')}
-    - Supplier: {scores.get('supplier')}
-    - Risk: {scores.get('risk')}
-    """
-    
-    response = client.models.generate_content(
-        model='gemini-3.1-pro',
-        contents=prompt,
-        config=types.GenerateContentConfig(
-            temperature=0.3
-        )
+def reoptimize(current_state: dict, forecast_func, decide_func):
+    updated_forecast = forecast_func(
+        current_state.get('cash_balance', 0),
+        current_state.get('invoices', []),
+        current_state.get('receivables', [])
     )
     
-    return response.text
+    invoices = current_state.get('invoices', [])
+    updated_decisions = []
+    
+    for invoice in invoices:
+        decision = decide_func(invoice, updated_forecast)
+        updated_decisions.append({
+            "invoice_id": invoice.get("id"),
+            "decision": decision
+        })
+        
+    return updated_forecast, updated_decisions

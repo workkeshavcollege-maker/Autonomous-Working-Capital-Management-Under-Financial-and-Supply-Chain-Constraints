@@ -2,11 +2,17 @@ import os
 from dotenv import load_dotenv
 from google import genai
 from google.genai import types
+
 def explain_decision(invoice: dict, action: str, scores: dict) -> str:
     """
-    Explains the financial trade-offs of a decision using Gemini Pro 3.1.
+    Explains the financial trade-offs of a decision using Gemini.
     """
     load_dotenv()
+    
+    # Force Python to ignore the old global Windows key
+    if "GOOGLE_API_KEY" in os.environ:
+        del os.environ["GOOGLE_API_KEY"]
+        
     api_key = os.getenv("GEMINI_API_KEY")
     
     if not api_key:
@@ -36,9 +42,11 @@ def explain_decision(invoice: dict, action: str, scores: dict) -> str:
     """
     
     response = client.models.generate_content(
-        model='gemini-3.1-pro',
+        model='gemini-2.5-flash',
         contents=prompt,
         config=types.GenerateContentConfig(
             temperature=0.3
         )
     )
+    
+    return response.text

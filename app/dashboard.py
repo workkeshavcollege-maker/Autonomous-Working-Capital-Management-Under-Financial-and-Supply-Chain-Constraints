@@ -113,6 +113,15 @@ st.markdown("""
         border-color: #C25E3E;
     }
 
+    /* Form Controls & Inputs */
+    [data-testid="stNumberInput"] input {
+        border-radius: 6px !important;
+        border-color: #DFD9CD !important;
+        font-family: 'Space Grotesk', sans-serif !important;
+        font-weight: 600 !important;
+        color: #1C1917 !important;
+    }
+
     /* Primary Action Button */
     .stButton > button {
         background-color: #C25E3E !important;
@@ -174,7 +183,6 @@ except ImportError as e:
         for i in range(days):
             date_str = (start_date + datetime.timedelta(days=i)).strftime("%Y-%m-%d")
             projection.append({"date": date_str, "cash_projection": cash})
-            # Add some random walk for the projection
             cash += random.uniform(-5000, 10000)
         return projection
 
@@ -199,15 +207,15 @@ except ImportError as e:
         """Returns a plain-English explanation"""
         return (f"The recommended action for Invoice {invoice['id']} is to '{action}'. "
                 f"This decision is supported by a liquidity score of {scores.get('liquidity')} "
-                f"and a supplier impact score of {scores.get('supplier')}. "
-                f"Rationale: Model selected {action} based on calculated financial and risk trade-offs.")
+                f"and a supplier impact score of {scores.get('supplier')}.")
+
+    def explain_all_decisions(invoices: list, decisions: list) -> dict:
+        return {inv["id"]: explain_decision(inv, dec["action"], dec["scores"]) for inv, dec in zip(invoices, decisions)}
 
     def detect_change(previous_state: dict, current_state: dict) -> list:
-        """Mock monitor function to simulate dynamic real-world financial shifts"""
         return []
 
     def reoptimize(current_state: dict, forecast_func, decide_func):
-        """Mock monitor function to re-evaluate decisions"""
         return [], []
 
 def generate_mock_invoices(base_date: datetime.date) -> List[Dict[str, Any]]:
@@ -224,6 +232,51 @@ def generate_mock_invoices(base_date: datetime.date) -> List[Dict[str, Any]]:
         }
         for _ in range(5)
     ]
+
+def parse_uploaded_invoices(df: pd.DataFrame, base_date: datetime.date) -> List[Dict[str, Any]]:
+    """Flexible parser to handle user uploaded CSV or Excel files with arbitrary column names."""
+    col_map = {}
+    for col in df.columns:
+        c_clean = str(col).strip().lower().replace('_', ' ').replace('-', ' ')
+        if any(k in c_clean for k in ['id', 'invoice']):
+            col_map[col] = 'id'
+        elif any(k in c_clean for k in ['vendor', 'supplier', 'partner', 'company', 'name']):
+            col_map[col] = 'supplier'
+        elif any(k in c_clean for k in ['amount', 'total', 'value', 'balance', 'price']):
+            col_map[col] = 'amount'
+        elif any(k in c_clean for k in ['due', 'date', 'maturity', 'deadline']):
+            col_map[col] = 'due_date'
+        elif any(k in c_clean for k in ['discount', 'disc', 'pct', 'rate']):
+            col_map[col] = 'discount_pct'
+            
+    df_renamed = df.rename(columns=col_map)
+    invoices = []
+    for idx, row in df_renamed.iterrows():
+        try:
+            amt_val = float(str(row.get('amount', 10000)).replace('$', '').replace(',', '').strip())
+        except Exception:
+            amt_val = 10000.0
+            
+        try:
+            disc_val = float(str(row.get('discount_pct', 2.0)).replace('%', '').strip())
+        except Exception:
+            disc_val = 2.0
+
+        due_val = str(row.get('due_date', (base_date + datetime.timedelta(days=20)).strftime("%Y-%m-%d")))
+        if pd.isna(due_val) or due_val.lower() == 'nan':
+            due_val = (base_date + datetime.timedelta(days=20)).strftime("%Y-%m-%d")
+
+        inv = {
+            'id': str(row.get('id', f'INV-{idx+1001}')),
+            'supplier': str(row.get('supplier', f'Supplier {idx+1}')),
+            'amount': round(amt_val, 2),
+            'due_date': due_val[:10],
+            'discount_pct': round(disc_val, 2),
+            'discount_deadline': (base_date + datetime.timedelta(days=5)).strftime("%Y-%m-%d"),
+            'penalty_pct': 2.0
+        }
+        invoices.append(inv)
+    return invoices
 
 # ---------------------------------------------------------
 # State Management (st.session_state)
@@ -335,20 +388,79 @@ with left_col:
         else:
             st.write("No projection data available.")
 
-    # 2. Simulation Console Card
+    # 2. Treasury & Ledger Controls Card
     st.markdown("""
     <div style="margin-top: 1.5rem; margin-bottom: 8px;">
-        <span class="section-header">Simulation Controls</span>
+        <span class="section-header">Treasury & Data Controls</span>
     </div>
     """, unsafe_allow_html=True)
     
     with st.container(border=True):
-        st.markdown("""
-        <p style="font-size: 0.88rem; color: #57534E; margin-bottom: 14px; line-height: 1.5;">
-            Step to the next operational day to process payment settlements, evaluate incoming vendor liabilities, and re-optimize treasury decisions in real time.
-        </p>
-        """, unsafe_allow_html=True)
+        # Treasury Cash Balance override input
+        st.markdown("<div style='font-size: 0.80rem; font-weight: 600; color: #44403C; margin-bottom: 3px;'>Treasury Cash Balance ($)</div>", unsafe_allow_html=True)
+        new_cash = st.number_input(
+            "Adjust Starting Cash Balance",
+            min_value=0.0,
+            max_value=50000000.0,
+            value=float(st.session_state.current_cash_balance),
+            step=10000.0,
+            format="%.2f",
+            label_visibility="collapsed",
+            help="Directly adjust starting liquidity to evaluate decision changes."
+        )
+        if new_cash != st.session_state.current_cash_balance:
+            st.session_state.current_cash_balance = new_cash
+            st.rerun()
+
+        st.markdown("<div style='margin-top: 1rem;'></div>", unsafe_allow_html=True)
         
+        # User Data Upload
+        st.markdown("<div style='font-size: 0.80rem; font-weight: 600; color: #44403C; margin-bottom: 3px;'>Upload Custom Invoice Ledger (CSV or Excel)</div>", unsafe_allow_html=True)
+        uploaded_file = st.file_uploader(
+            "Upload Ledger File",
+            type=["csv", "xlsx"],
+            label_visibility="collapsed",
+            help="Upload your own custom invoice file with columns: Invoice ID, Supplier, Amount, Due Date, Discount Rate (%)."
+        )
+        
+        if uploaded_file is not None:
+            file_key = f"uploaded_{uploaded_file.name}_{uploaded_file.size}"
+            if st.session_state.get("last_uploaded_file") != file_key:
+                try:
+                    if uploaded_file.name.endswith(".csv"):
+                        df_up = pd.read_csv(uploaded_file)
+                    else:
+                        df_up = pd.read_excel(uploaded_file)
+                    
+                    parsed_invoices = parse_uploaded_invoices(df_up, st.session_state.current_simulated_date)
+                    if parsed_invoices:
+                        st.session_state.active_invoices = parsed_invoices
+                        st.session_state.last_uploaded_file = file_key
+                        st.success(f"✓ Successfully loaded {len(parsed_invoices)} invoices from {uploaded_file.name}")
+                        st.rerun()
+                except Exception as e:
+                    st.error(f"Error parsing file: {e}")
+
+        # Template download & Reset buttons
+        col_btn1, col_btn2 = st.columns(2)
+        with col_btn1:
+            sample_csv = "Invoice ID,Supplier,Amount,Due Date,Discount Rate (%)\nINV-8801,Apex Tech,42000.00,2026-09-18,2.5\nINV-8802,Vertex Logistics,27500.00,2026-09-25,1.5\nINV-8803,Stark Industries,89000.00,2026-09-20,3.0\nINV-8804,Nordic Components,15400.00,2026-09-12,2.0\nINV-8805,Helios Energy,63000.00,2026-09-28,1.0"
+            st.download_button(
+                label="📥 Sample CSV",
+                data=sample_csv,
+                file_name="sample_ledger.csv",
+                mime="text/csv",
+                use_container_width=True
+            )
+        with col_btn2:
+            if st.button("🔄 Reset Demo", use_container_width=True):
+                st.session_state.active_invoices = generate_mock_invoices(st.session_state.current_simulated_date)
+                st.session_state.last_uploaded_file = None
+                st.rerun()
+
+        st.markdown("<div style='margin-top: 1rem;'></div>", unsafe_allow_html=True)
+        
+        # Advance Simulation Cycle button
         if st.button("Advance Simulation Cycle", type="primary", use_container_width=True):
             # Capture previous state
             previous_state = {
@@ -360,8 +472,6 @@ with left_col:
             
             # 1. Advance current_simulated_date by one day
             st.session_state.current_simulated_date += datetime.timedelta(days=1)
-            
-            # Apply dynamic financial shifts
             st.session_state.current_cash_balance += random.uniform(-15000, 20000)
             
             # Remove older invoices (simulating payment) and add new ones
@@ -382,8 +492,6 @@ with left_col:
             # 2. Trigger detect_change() and reoptimize()
             changes = detect_change(previous_state, current_state)
             updated_forecast, updated_decisions = reoptimize(current_state, project_cashflow, choose_best_action)
-            
-            # 3. Refresh dashboard screen
             st.rerun()
 
 with right_col:
@@ -431,15 +539,8 @@ with right_col:
 
     st.markdown("<div style='margin-bottom: 1.5rem;'></div>", unsafe_allow_html=True)
 
-    # 4. Decision Rationale & Scorecards (High-Speed Batch AI Generation)
-    @st.cache_data(show_spinner=False)
-    def get_all_explanations_cached(invoices_list: list, decisions_list: list) -> dict:
-        try:
-            return explain_all_decisions(invoices_list, decisions_list)
-        except Exception:
-            return {}
-
-    all_explanations = get_all_explanations_cached(st.session_state.active_invoices, decisions)
+    # 4. Decision Rationale & Scorecards (Right Column)
+    all_explanations = explain_all_decisions(st.session_state.active_invoices, decisions)
 
     st.markdown("""
     <div style="display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 8px;">
@@ -452,25 +553,8 @@ with right_col:
         with st.expander(f"{inv['id']} — {inv['supplier']} | Recommendation: {action_title}"):
             explanation = all_explanations.get(inv["id"])
             if not explanation:
-                # High-fidelity custom contextual analysis if API is offline
-                supplier = inv["supplier"]
-                amount = inv["amount"]
-                due_date = inv["due_date"]
-                discount_pct = inv.get("discount_pct", 0.0)
-                liq = dec["scores"].get('liquidity', 0.5)
-                cost = dec["scores"].get('cost', 0.5)
-                supp = dec["scores"].get('supplier', 0.5)
+                explanation = explain_decision(inv, dec["action"], dec["scores"])
                 
-                if "discount" in dec["action"].lower():
-                    explanation = (f"Electing to capture the {discount_pct:.1f}% early payment discount on {supplier}'s ${amount:,.2f} invoice delivers an immediate, risk-free cost reduction (optimization score: {cost:.2f}). "
-                                   f"While this accelerates a cash outflow prior to {due_date}, the company's current liquidity index of {liq:.2f} comfortably absorbs the payment without stressing working capital.")
-                elif "delay" in dec["action"].lower():
-                    explanation = (f"Postponing settlement on {supplier}'s ${amount:,.2f} obligation preserves crucial short-term liquidity (score: {liq:.2f}) to maintain buffer for higher-priority operations. "
-                                   f"Although delaying past {due_date} introduces a supplier impact trade-off (alignment: {supp:.2f}), the immediate cash retention outweighs the late financing friction.")
-                else:
-                    explanation = (f"Settling {supplier}'s ${amount:,.2f} invoice on its maturity date ({due_date}) preserves full trade credit terms and vendor goodwill (supplier score: {supp:.2f}). "
-                                   f"This neutral timing aligns smoothly with scheduled cash inflows, avoiding early outflow while eliminating late penalty exposure.")
-
             st.info(explanation)
             
             # Sub-scores breakdown using native cards with truncation-prevention CSS
